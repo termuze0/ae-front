@@ -1,10 +1,16 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import tailwindcss from '@tailwindcss/vite';
-
+import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
-  plugins: [
-    react(),
-    tailwindcss(),
-  ],
+  plugins: [react(), tailwindcss(),],
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: 'https://ae-exam.onrender.com', // ⚠️ NO trailing slash here
+        changeOrigin: true,
+        secure: false,
+      },
+    },
+  },
 });
