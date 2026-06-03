@@ -8,7 +8,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'https://ae-exam.onrender.com',
+        target: 'https://ae-exam.onrender.com/api',
         changeOrigin: true,
       },
     },
