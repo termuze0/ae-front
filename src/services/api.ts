@@ -37,7 +37,7 @@ export interface SubmitResponse {
 
 const API_BASE_URL = import.meta.env.DEV
   ? '/api'
-  : import.meta.env.VITE_API_BASE_URL ?? 'https://ae-exam.onrender.com';
+  : import.meta.env.VITE_API_BASE_URL ?? 'https://ae-exam.onrender.com/api';
 
 const API = axios.create({
   baseURL: API_BASE_URL,
