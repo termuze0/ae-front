@@ -35,18 +35,17 @@ export interface SubmitResponse {
   percentage: number;
 }
 
-// ✅ IMPORTANT: Use relative path /api for development
-// This will go through the Vite proxy and avoid CORS
+const API_BASE_URL = import.meta.env.DEV
+  ? '/api'
+  : import.meta.env.VITE_API_BASE_URL ?? 'https://ae-exam.onrender.com';
+
 const API = axios.create({
-  baseURL: 'https://ae-exam.onrender.com/api',  // This works with the proxy in vite.config.ts
+  baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
   timeout: 30000,
 });
-
-// Log the base URL for debugging
-console.log('API Base URL:', API.defaults.baseURL);
 
 // API Functions
 export const getExams = async (): Promise<Exam[]> => {
