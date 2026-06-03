@@ -38,7 +38,7 @@ export interface SubmitResponse {
 // ✅ IMPORTANT: Use relative path /api for development
 // This will go through the Vite proxy and avoid CORS
 const API = axios.create({
-  baseURL: '/api',  // This works with the proxy in vite.config.ts
+  baseURL: 'https://ae-exam.onrender.com/api',  // This works with the proxy in vite.config.ts
   headers: {
     'Content-Type': 'application/json',
   },
