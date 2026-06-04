@@ -41,7 +41,7 @@ const getApiUrl = (): string => {
     return import.meta.env.VITE_API_URL;
   }
   if (import.meta.env.DEV) {
-    return '/api'; // Use Vite proxy in development
+    return '/api'; 
   }
   return 'https://ae-exam.onrender.com/api';
 };
@@ -107,7 +107,7 @@ API.interceptors.response.use(
 // API Functions
 export const getExams = async (): Promise<Exam[]> => {
   try {
-    const response = await API.get<Exam[]>("/exam");
+    const response = await API.get<Exam[]>("/exam/");
     return response.data;
   } catch (error) {
     console.error('getExams failed:', error);
