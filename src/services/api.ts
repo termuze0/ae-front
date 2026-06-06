@@ -1,5 +1,38 @@
 import axios from 'axios';
 
+const extractDjoserErrorMessage = (data: any): string => {
+  if (!data) return '';
+  if (typeof data === 'string') return data;
+  if (Array.isArray(data)) return data.filter(Boolean).join(' ');
+  if (typeof data === 'object') {
+    if (data.detail) return String(data.detail);
+    if (data.message) return String(data.message);
+
+    const messages: string[] = [];
+    for (const key of Object.keys(data)) {
+      const value = data[key];
+
+      if (Array.isArray(value)) {
+        const text = value.filter(Boolean).join(' ');
+        if (text) {
+          messages.push(key === 'non_field_errors' ? text : `${key.replace(/_/g, ' ')}: ${text}`);
+        }
+      } else if (typeof value === 'string') {
+        messages.push(key === 'non_field_errors' ? value : `${key.replace(/_/g, ' ')}: ${value}`);
+      } else if (value && typeof value === 'object') {
+        const nested = extractDjoserErrorMessage(value);
+        if (nested) {
+          messages.push(key === 'non_field_errors' ? nested : `${key.replace(/_/g, ' ')}: ${nested}`);
+        }
+      }
+    }
+
+    return messages.join(' ');
+  }
+
+  return '';
+};
+
 // Type definitions
 export interface Answer {
   id: number;
@@ -18,7 +51,19 @@ export interface Exam {
   title: string;
   description: string;
   duration_minutes: number;
+  duration?: number;
+  total_questions?: number;
   questions?: Question[];
+}
+
+export interface AuthUser {
+  id: number;
+  email: string;
+  username?: string;
+  first_name?: string;
+  last_name?: string;
+  name?: string;
+  role?: string;
 }
 
 export interface AnswerSheet {
@@ -57,12 +102,14 @@ const API = axios.create({
   // withCredentials: false is the default and works with wildcard CORS
 });
 
+const ACCESS_TOKEN_KEY = 'ae_auth_token';
+
 // Only add credentials if absolutely needed (like for session-based auth)
 // For token-based auth (JWT), you don't need credentials
 API.interceptors.request.use(
   (config) => {
     // Add auth token if needed (this doesn't trigger CORS credentials preflight)
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem(ACCESS_TOKEN_KEY);
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -93,8 +140,9 @@ API.interceptors.response.use(
     
     if (error.response) {
       console.error(`Server error ${error.response.status}:`, error.response.data);
+      const friendlyMessage = extractDjoserErrorMessage(error.response.data) || error.response.data?.message || `Server error: ${error.response.status}`;
       return Promise.reject({ 
-        message: error.response.data?.message || `Server error: ${error.response.status}`,
+        message: friendlyMessage,
         status: error.response.status 
       });
     }
@@ -139,6 +187,46 @@ export const testConnection = async (): Promise<boolean> => {
     console.error('❌ API connection failed:', error);
     return false;
   }
+};
+
+export interface AuthTokens {
+  access: string;
+  refresh: string;
+}
+
+export interface DjoserUserResponse {
+  id: number;
+  email: string;
+  username?: string;
+  first_name?: string;
+  last_name?: string;
+}
+
+export const loginUser = async (username: string, password: string): Promise<AuthTokens> => {
+  const payload = { username, password };
+  const response = await API.post<AuthTokens>('/auth/jwt/create/', payload);
+  return response.data;
+};
+
+export const registerUser = async (name: string, email: string, password: string): Promise<DjoserUserResponse> => {
+  const payload = {
+    email,
+    password,
+    re_password: password,
+    username: name || email,
+  };
+  const response = await API.post<DjoserUserResponse>('/auth/users/', payload);
+  return response.data;
+};
+
+export const getMe = async (): Promise<AuthUser> => {
+  const response = await API.get<AuthUser>('/auth/users/me/');
+  return response.data;
+};
+
+export const refreshAccessToken = async (refresh: string): Promise<string> => {
+  const response = await API.post<{ access: string }>('/auth/jwt/refresh/', { refresh });
+  return response.data.access;
 };
 
 export default API;

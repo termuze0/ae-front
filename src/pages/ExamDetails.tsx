@@ -72,11 +72,11 @@ const ExamDetails: React.FC = () => {
         <div className="border-t border-b py-4 mb-6">
           <div className="flex justify-between mb-2">
             <span className="font-semibold">Duration:</span>
-            <span>{exam.duration_minutes} minutes</span>
+            <span>{exam.duration_minutes ?? exam.duration ?? 0} minutes</span>
           </div>
           <div className="flex justify-between">
             <span className="font-semibold">Total Questions:</span>
-            <span>{exam.questions?.length || 0}</span>
+            <span>{exam.questions?.length ?? exam.total_questions ?? 0}</span>
           </div>
         </div>
 
@@ -94,6 +94,7 @@ const ExamDetails: React.FC = () => {
             Back to Exams
           </Link>
         </div>
+
       </div>
     </div>
   );

@@ -241,6 +241,17 @@ Make it thorough and educational.`;
         explanationsMap[question.id] = explanation;
       }
     }
+
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(
+        'ae-exam-previous-attempt',
+        JSON.stringify({
+          result: localResult,
+          examTitle: exam?.title,
+          questions: exam?.questions,
+        })
+      );
+    }
     
     navigate(`/exam/${id}/result`, { 
       state: { 
@@ -319,10 +330,7 @@ Make it thorough and educational.`;
               {exam.questions?.map((_, idx) => {
                 const isAnswered = answers[exam.questions![idx].id] !== 0;
                 const isCurrent = idx === currentQuestionIndex;
-                const isCorrect = isAnswered && exam.questions![idx].answers.find(
-                  a => a.id === answers[exam.questions![idx].id]
-                )?.is_correct;
-                
+
                 return (
                   <button
                     key={idx}
@@ -333,19 +341,12 @@ Make it thorough and educational.`;
                       ${isCurrent 
                         ? 'bg-blue-500 text-white ring-2 ring-blue-300 scale-105' 
                         : isAnswered 
-                          ? isCorrect
-                            ? 'bg-green-500 text-white hover:bg-green-600'
-                            : 'bg-red-500 text-white hover:bg-red-600'
+                          ? 'bg-blue-500 text-white hover:bg-blue-600'
                           : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
                       }
                     `}
                   >
                     {idx + 1}
-                    {isAnswered && (
-                      <span className="ml-0.5 text-xs">
-                        {isCorrect ? '✓' : '✗'}
-                      </span>
-                    )}
                   </button>
                 );
               })}

@@ -1,12 +1,21 @@
-import { useState } from "react";
-import logo from "../assets/ae.jpg";
+import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import logo from '../assets/ae.jpg';
+import { useAuth } from '../context/AuthContext';
 
 const Navbar = () => {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const navigate = useNavigate();
+  const { user, isAuthenticated, logout } = useAuth();
 
   const handleAuthAction = () => {
-    setIsLoggedIn(!isLoggedIn);
+    if (isAuthenticated) {
+      logout();
+      navigate('/');
+      return;
+    }
+
+    navigate('/login');
   };
 
   return (
@@ -34,49 +43,29 @@ const Navbar = () => {
 
           {/* Desktop Menu */}
           <div className="hidden md:flex items-center gap-8">
-            <a
-              href="#"
-              className="text-white hover:text-purple-200 transition-colors font-medium"
-            >
+            <Link to="/" className="text-white hover:text-purple-200 transition-colors font-medium">
               Home
-            </a>
-
-            <a
-              href="#"
-              className="text-white hover:text-purple-200 transition-colors font-medium"
-            >
-              Exams
-            </a>
-
-            <a
-              href="#"
-              className="text-white hover:text-purple-200 transition-colors font-medium"
-            >
-              Subjects
-            </a>
-
-            <a
-              href="#"
-              className="text-white hover:text-purple-200 transition-colors font-medium"
-            >
-              Results
-            </a>
-
-            <a
-              href="#"
-              className="text-white hover:text-purple-200 transition-colors font-medium"
-            >
-              Contact
-            </a>
+            </Link>
+            <Link to="/previous-attempt" className="text-white hover:text-purple-200 transition-colors font-medium">
+              Previous Attempt
+            </Link>
+            <Link to="/about" className="text-white hover:text-purple-200 transition-colors font-medium">
+              About
+            </Link>
           </div>
 
           {/* Desktop Auth Button */}
-          <div className="hidden md:block">
+          <div className="hidden md:flex items-center gap-4">
+            {user && (
+              <span className="text-sm text-white/90">
+                Hi, {user.name || user.username || user.email?.split('@')[0] || 'there'}
+              </span>
+            )}
             <button
               onClick={handleAuthAction}
               className="bg-white text-purple-700 px-6 py-2 rounded-full font-semibold hover:bg-gray-100 hover:shadow-md transition-all duration-300"
             >
-              {isLoggedIn ? "Logout" : "Login / Register"}
+              {isAuthenticated ? 'Logout' : 'Login / Register'}
             </button>
           </div>
 
@@ -125,46 +114,38 @@ const Navbar = () => {
         {isMobileMenuOpen && (
           <div className="md:hidden border-t border-purple-500 py-4">
             <div className="flex flex-col gap-3">
-              <a
-                href="#"
+              <Link
+                to="/"
+                onClick={() => setIsMobileMenuOpen(false)}
                 className="text-white px-2 py-2 rounded hover:bg-purple-500"
               >
                 Home
-              </a>
+              </Link>
 
-              <a
-                href="#"
+              <Link
+                to="/previous-attempt"
+                onClick={() => setIsMobileMenuOpen(false)}
                 className="text-white px-2 py-2 rounded hover:bg-purple-500"
               >
-                Exams
-              </a>
+                Previous Attempt
+              </Link>
 
-              <a
-                href="#"
+              <Link
+                to="/about"
+                onClick={() => setIsMobileMenuOpen(false)}
                 className="text-white px-2 py-2 rounded hover:bg-purple-500"
               >
-                Subjects
-              </a>
-
-              <a
-                href="#"
-                className="text-white px-2 py-2 rounded hover:bg-purple-500"
-              >
-                Results
-              </a>
-
-              <a
-                href="#"
-                className="text-white px-2 py-2 rounded hover:bg-purple-500"
-              >
-                Contact
-              </a>
+                About
+              </Link>
 
               <button
-                onClick={handleAuthAction}
+                onClick={() => {
+                  handleAuthAction();
+                  setIsMobileMenuOpen(false);
+                }}
                 className="mt-2 bg-white text-purple-700 px-4 py-2 rounded-full font-semibold"
               >
-                {isLoggedIn ? "Logout" : "Login / Register"}
+                {isAuthenticated ? 'Logout' : 'Login / Register'}
               </button>
             </div>
           </div>
