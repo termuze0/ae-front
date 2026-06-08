@@ -28,6 +28,10 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     if (nextToken) {
       localStorage.setItem(TOKEN_KEY, nextToken);
       API.defaults.headers.common.Authorization = `Bearer ${nextToken}`;
+      console.debug('Auth token set:', {
+        tokenPreview: `${nextToken?.slice(0, 10)}...`,
+        header: API.defaults.headers.common.Authorization,
+      });
       setToken(nextToken);
     } else {
       localStorage.removeItem(TOKEN_KEY);
@@ -101,10 +105,16 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
     try {
       const tokens = await loginUser(identifier, password);
+      console.debug('loginUser returned tokens:', tokens);
       setTokens(tokens.access, tokens.refresh);
+      console.debug('After setTokens, API header:', API.defaults.headers.common.Authorization);
       const profile = await getMe();
       setUser(profile);
     } catch (err: any) {
+      console.error('Login error:', err);
+      if (err?.response) {
+        console.error('Login error response data:', err.response.data);
+      }
       setError(err?.message || 'Login failed. Please check your credentials.');
       throw err;
     } finally {
@@ -113,20 +123,19 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   const register = async (name: string, email: string, password: string) => {
-    setLoading(true);
-    setError(null);
+  setLoading(true);
+  setError(null);
 
-    try {
-      await registerUser(name, email, password);
-      await login(email, password);
-    } catch (err: any) {
-      setError(err?.message || 'Registration failed. Please try again.');
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  try {
+    await registerUser(name, email, password);
+    await login(name, password);  // use name (username), not email
+  } catch (err: any) {
+    setError(err?.message || 'Registration failed. Please try again.');
+    throw err;
+  } finally {
+    setLoading(false);
+  }
+};
   const logout = () => {
     setTokens(null, null);
     setUser(null);
