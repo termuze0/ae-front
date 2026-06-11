@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { getExam } from '../services/api';
-import type { Exam, AnswerSheet, SubmitResponse } from '../services/api';
+import { getExam, getPassage } from '../services/api';
+import type { Exam, AnswerSheet, SubmitResponse, Passage } from '../services/api';
 
 // Gemini API configuration — load API key from Vite env to avoid committing secrets
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
@@ -21,6 +21,7 @@ const TakeExam: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [exam, setExam] = useState<Exam | null>(null);
+  const [passageMap, setPassageMap] = useState<Record<number, Passage>>({});
   const [answers, setAnswers] = useState<AnswerSheet>({});
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
@@ -57,9 +58,47 @@ const TakeExam: React.FC = () => {
         initialAnswers[question.id] = 0;
       });
       setAnswers(initialAnswers);
+      // Fetch any passages referenced by the exam or its questions
+      fetchPassagesForExam(examData);
     } catch (error) {
       console.error('Error fetching exam:', error);
       setError(error instanceof Error ? error.message : 'Failed to load exam. Please try again.');
+    }
+  };
+
+  const fetchPassagesForExam = async (examData: Exam) => {
+    try {
+      const ids = new Set<number>();
+
+      // exam-level passage id
+      if (typeof examData.passage === 'number') ids.add(examData.passage as number);
+      if (examData.passage_id) ids.add(examData.passage_id);
+
+      // question-level passage ids
+      examData.questions?.forEach((q) => {
+        if (!q) return;
+        if (typeof q.passage === 'number') ids.add(q.passage as number);
+        else if (q.passage && (q.passage as Passage).id) ids.add((q.passage as Passage).id);
+        // also support legacy 'passage_id' property
+        const anyQ = q as any;
+        if (anyQ.passage_id) ids.add(anyQ.passage_id as number);
+      });
+
+      if (ids.size === 0) return;
+
+      const map: Record<number, Passage> = {};
+      await Promise.all(Array.from(ids).map(async (pid) => {
+        try {
+          const p = await getPassage(pid);
+          map[pid] = p;
+        } catch (err) {
+          console.warn('Failed to load passage', pid, err);
+        }
+      }));
+
+      setPassageMap(map);
+    } catch (err) {
+      console.error('Error fetching passages for exam:', err);
     }
   };
 
@@ -391,8 +430,101 @@ Make it thorough and educational.`;
                   </span>
                 )}
               </div>
-              
+              {/* Render exam-level passage if present (can be null). Support text or image URLs. */}
+              {(() => {
+                // resolve exam passage from several possible shapes
+                const raw = exam.passage;
+                let resolved: Passage | null = null;
+                if (!raw && exam.passage_id && passageMap[exam.passage_id]) resolved = passageMap[exam.passage_id];
+                else if (typeof raw === 'number' && passageMap[raw]) resolved = passageMap[raw];
+                else if (raw && typeof raw === 'object' && (raw as Passage).content) resolved = raw as Passage;
+
+                if (!resolved) return null;
+
+                const url = resolved.image;
+                const text = resolved.content || resolved.title;
+                const buildImageUrl = (u?: string | null) => {
+                  if (!u) return undefined;
+                  if (/^https?:\/\//i.test(u) || u.startsWith('/')) return u;
+                  const cloud = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+                  if (!cloud) return u;
+                  let cleaned = u.replace(/^\/+/, '');
+                  // If it's a bare public id (no slashes and no resource type), prepend default Cloudinary path
+                  if (!cleaned.includes('/') && !/^image\/upload\//i.test(cleaned)) {
+                    cleaned = `image/upload/${cleaned}`;
+                  }
+                  return `https://res.cloudinary.com/${cloud}/${cleaned}`;
+                };
+
+                const finalUrl = buildImageUrl(url);
+                const looksLikeImage = (u?: string) => !!u && /\.(png|jpe?g|gif|svg|webp)(\?.*)?$/i.test(u);
+
+                if (finalUrl && looksLikeImage(finalUrl)) {
+                  return (
+                    <div className="mb-4 rounded border p-2">
+                      <img src={finalUrl} alt={resolved.title || 'Passage image'} className="max-w-full h-auto mx-auto" />
+                    </div>
+                  );
+                }
+
+                if (text) {
+                  return (
+                    <div className="mb-4 rounded border p-4 bg-gray-50 text-gray-800">{text}</div>
+                  );
+                }
+
+                return <pre className="mb-4 rounded border p-2 bg-gray-50 text-xs overflow-auto">{JSON.stringify(resolved)}</pre>;
+              })()}
+
               <div className="space-y-3 mt-6">
+                {/* Render question-level passage if present */}
+                {(() => {
+                  const qRaw = currentQuestion.passage;
+                  let qResolved: Passage | null = null;
+                  if (!qRaw) {
+                    const anyQ = currentQuestion as any;
+                    if (anyQ.passage_id && passageMap[anyQ.passage_id]) qResolved = passageMap[anyQ.passage_id];
+                  } else if (typeof qRaw === 'number' && passageMap[qRaw]) qResolved = passageMap[qRaw];
+                  else if (qRaw && typeof qRaw === 'object' && (qRaw as Passage).content) qResolved = qRaw as Passage;
+
+                  if (qResolved) {
+                    const url = qResolved.image;
+                    const text = qResolved.content || qResolved.title;
+                    const looksLikeImage = (u?: string) => !!u && /\.(png|jpe?g|gif|svg|webp)(\?.*)?$/i.test(u);
+
+                    const buildImageUrlQ = (u?: string | null) => {
+                      if (!u) return undefined;
+                      if (/^https?:\/\//i.test(u) || u.startsWith('/')) return u;
+                      const cloud = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+                      if (!cloud) return u;
+                      let cleaned = u.replace(/^\/+/, '');
+                      if (!cleaned.includes('/') && !/^image\/upload\//i.test(cleaned)) {
+                        cleaned = `image/upload/${cleaned}`;
+                      }
+                      return `https://res.cloudinary.com/${cloud}/${cleaned}`;
+                    };
+
+                    const finalUrlQ = buildImageUrlQ(url);
+                    if (finalUrlQ && looksLikeImage(finalUrlQ)) {
+                      return (
+                        <div className="mb-4 rounded border p-2">
+                          <img src={finalUrlQ} alt={qResolved.title || 'Passage image'} className="max-w-full h-auto mx-auto" />
+                        </div>
+                      );
+                    }
+
+                    if (text) {
+                      return (
+                        <div className="mb-4 rounded border p-4 bg-gray-50 text-gray-800">{text}</div>
+                      );
+                    }
+
+                    return <pre className="mb-4 rounded border p-2 bg-gray-50 text-xs overflow-auto">{JSON.stringify(qResolved)}</pre>;
+                  }
+
+                  return null;
+                })()}
+
                 {currentQuestion.answers.map((answer) => (
                   <label
                     key={answer.id}

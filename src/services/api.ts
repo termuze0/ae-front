@@ -40,10 +40,20 @@ export interface Answer {
   is_correct: boolean;
 }
 
+export interface Passage {
+  id: number;
+  title?: string;
+  content?: string;
+  // image field returned by backend (Cloudinary) is typically a URL string or null
+  image?: string | null;
+}
+
 export interface Question {
   id: number;
   text: string;
   answers: Answer[];
+  // backend may return a passage id, a nested passage object, or null
+  passage?: number | Passage | null;
 }
 
 export interface Exam {
@@ -54,6 +64,9 @@ export interface Exam {
   duration?: number;
   total_questions?: number;
   questions?: Question[];
+  // Optional passage support: backend may provide a passage object, url, or plain text. Can be null.
+  passage?: number | Passage | string | null;
+  passage_id?: number | null;
 }
 
 export interface AuthUser {
@@ -155,7 +168,7 @@ API.interceptors.response.use(
 // API Functions
 export const getExams = async (): Promise<Exam[]> => {
   try {
-    const response = await API.get<Exam[]>("/exam/");
+    const response = await API.get<Exam[]>("/exams/");
     return response.data;
   } catch (error) {
     console.error('getExams failed:', error);
@@ -165,7 +178,7 @@ export const getExams = async (): Promise<Exam[]> => {
 
 export const getExam = async (id: number): Promise<Exam> => {
   try {
-    const response = await API.get<Exam>(`/exam/${id}`);
+    const response = await API.get<Exam>(`/exams/${id}/`);
     return response.data;
   } catch (error) {
     console.error(`getExam(${id}) failed:`, error);
@@ -173,8 +186,19 @@ export const getExam = async (id: number): Promise<Exam> => {
   }
 };
 
+export const getPassage = async (id: number): Promise<Passage> => {
+  try {
+    const response = await API.get<Passage>(`/passages/${id}/`);
+    return response.data;
+  } catch (error) {
+    console.error(`getPassage(${id}) failed:`, error);
+    throw error;
+  }
+};
+
 export const submitExam = async (id: number, answers: AnswerSheet): Promise<SubmitResponse> => {
-  const response = await API.post<SubmitResponse>(`/exam/${id}/submit`, { answers });
+  // If your backend exposes a dedicated submit endpoint, update this path accordingly.
+  const response = await API.post<SubmitResponse>(`/exams/${id}/submit/`, { answers });
   return response.data;
 };
 

@@ -20,7 +20,6 @@ const ExamCard: React.FC<ExamCardProps> = ({ exam }) => {
         
         <div className="flex justify-between text-sm text-gray-500 mb-4">
           <span>⏱️ {exam.duration_minutes} minutes</span>
-          <span>📝 {exam.questions?.length ?? exam.total_questions ?? 0} questions</span>
         </div>
 
         <Link
