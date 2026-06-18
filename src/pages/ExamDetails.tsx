@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { getExam, getPassage } from '../services/api';
 import type { Exam, Passage } from '../services/api';
+import SafeHtml from '../components/SafeHtml';
 
 const ExamDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -77,8 +78,8 @@ const ExamDetails: React.FC = () => {
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="bg-white rounded-lg shadow-md p-8">
-        <h1 className="text-3xl font-bold mb-4">{exam.title}</h1>
-        <p className="text-gray-600 mb-6">{exam.description}</p>
+        <h1 className="text-3xl font-bold mb-4"><SafeHtml html={exam.title} /></h1>
+        <div className="text-gray-600 mb-6"><SafeHtml html={exam.description} /></div>
         {/* Render exam-level passage if provided by backend (may be null). Use fetched `passage` as fallback. */}
         {(exam.passage || passage) && (
           <div className="mb-6">

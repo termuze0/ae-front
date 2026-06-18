@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "dompurify": "^3.0.6",
     "@tailwindcss/vite": "^4.3.0",
     "axios": "^1.17.0",
     "axois": "^0.0.1-security",
@@ -20,6 +21,7 @@
     "tailwindcss": "^4.3.0"
   },
   "devDependencies": {
+    "@types/dompurify": "^2.3.3",
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.12.3",
     "@types/react": "^19.2.14",
