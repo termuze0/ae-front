@@ -19,7 +19,7 @@ const HomePage: React.FC = () => {
       setErrorDetails('');
     } catch (err: any) {
       if (import.meta.env.DEV) {
-        // DEV MODE: Show full detailed error info in the UI
+        
         console.error('❌ Detailed fetch error:', err);
 
         let devMessage = err.message || 'Failed to load exams';
@@ -35,7 +35,6 @@ const HomePage: React.FC = () => {
         setError(devMessage);
         setErrorDetails(devDetails);
       } else {
-        // PRODUCTION MODE: User-friendly clean error messages
         let userMessage = 'Unable to load exams right now. Please try again in a moment.';
 
         if (!navigator.onLine) {
@@ -54,7 +53,7 @@ const HomePage: React.FC = () => {
         }
 
         setError(userMessage);
-        setErrorDetails(''); // Keep tech details hidden in production
+        setErrorDetails(''); 
       }
     } finally {
       setLoading(false);
