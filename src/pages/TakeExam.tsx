@@ -1,34 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { getExam, getPassage } from '../services/api';
-import type { Exam, AnswerSheet, SubmitResponse, Passage } from '../services/api';
-
-// Gemini API configuration — load API key from Vite env to avoid committing secrets
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent';
-
-interface Explanation {
-  [questionId: number]: {
-    isCorrect: boolean;
-    explanation: string;
-    correctAnswer: string;
-    userAnswer: string;
-    detailedExplanation: string;
-  };
-}
+import { startExam, submitExam } from '../services/api';
+import type { ExamTake, AnswerSheet, SubmitResponse, Passage } from '../services/api';
 
 const TakeExam: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [exam, setExam] = useState<Exam | null>(null);
-  const [passageMap, setPassageMap] = useState<Record<number, Passage>>({});
+  const [exam, setExam] = useState<ExamTake | null>(null);
   const [answers, setAnswers] = useState<AnswerSheet>({});
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [startTime] = useState<Date>(new Date());
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState<number>(0);
-  const [loadingExplanation, setLoadingExplanation] = useState<number | null>(null);
+  const [needsPassword, setNeedsPassword] = useState<boolean>(false);
+  const [passwordInput, setPasswordInput] = useState<string>('');
 
   useEffect(() => {
     if (id) {
@@ -36,75 +21,41 @@ const TakeExam: React.FC = () => {
     }
   }, [id]);
 
-  const fetchExam = async () => {
+  const fetchExam = async (password?: string) => {
     try {
       setError(null);
-      console.log(`Fetching exam ${id} for taking...`);
-      const examData = await getExam(parseInt(id!));
-      
-      if (!examData) {
-        throw new Error('No exam data received');
-      }
-      
-      if (!examData.duration_minutes && examData.duration_minutes !== 0) {
-        throw new Error('Exam data is missing duration_minutes field');
-      }
-      
+      const { exam: examData } = await startExam(parseInt(id!, 10), password);
+
       setExam(examData);
+      setNeedsPassword(false);
       setTimeLeft(examData.duration_minutes * 60);
-      
+
       const initialAnswers: AnswerSheet = {};
       examData.questions?.forEach((question) => {
-        initialAnswers[question.id] = 0;
+        initialAnswers[question.id] = null;
       });
       setAnswers(initialAnswers);
-      // Fetch any passages referenced by the exam or its questions
-      fetchPassagesForExam(examData);
-    } catch (error) {
-      console.error('Error fetching exam:', error);
-      setError(error instanceof Error ? error.message : 'Failed to load exam. Please try again.');
+    } catch (err: any) {
+      // StartExamView returns 400 with a password-related detail when a
+      // password is required or the one supplied was wrong.
+      if (err?.status === 400 && /password/i.test(err?.message || '')) {
+        setNeedsPassword(true);
+        if (password) setError('Incorrect password. Please try again.');
+        return;
+      }
+      console.error('Error fetching exam:', err);
+      setError(err?.message || 'Failed to load exam. Please try again.');
     }
   };
 
-  const fetchPassagesForExam = async (examData: Exam) => {
-    try {
-      const ids = new Set<number>();
-
-      // exam-level passage id
-      if (typeof examData.passage === 'number') ids.add(examData.passage as number);
-      if (examData.passage_id) ids.add(examData.passage_id);
-
-      // question-level passage ids
-      examData.questions?.forEach((q) => {
-        if (!q) return;
-        if (typeof q.passage === 'number') ids.add(q.passage as number);
-        else if (q.passage && (q.passage as Passage).id) ids.add((q.passage as Passage).id);
-        // also support legacy 'passage_id' property
-        const anyQ = q as any;
-        if (anyQ.passage_id) ids.add(anyQ.passage_id as number);
-      });
-
-      if (ids.size === 0) return;
-
-      const map: Record<number, Passage> = {};
-      await Promise.all(Array.from(ids).map(async (pid) => {
-        try {
-          const p = await getPassage(pid);
-          map[pid] = p;
-        } catch (err) {
-          console.warn('Failed to load passage', pid, err);
-        }
-      }));
-
-      setPassageMap(map);
-    } catch (err) {
-      console.error('Error fetching passages for exam:', err);
-    }
+  const handlePasswordSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    fetchExam(passwordInput);
   };
 
   useEffect(() => {
     if (timeLeft === null || timeLeft === 0) return;
-    
+
     const timer = setInterval(() => {
       setTimeLeft((prev) => {
         if (prev === null || prev <= 1) {
@@ -116,6 +67,14 @@ const TakeExam: React.FC = () => {
     }, 1000);
 
     return () => clearInterval(timer);
+  }, [timeLeft]);
+
+  // Auto-submit when the timer runs out.
+  useEffect(() => {
+    if (timeLeft === 0 && exam && !submitting) {
+      handleSubmit();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeLeft]);
 
   const formatTime = (seconds: number): string => {
@@ -149,159 +108,87 @@ const TakeExam: React.FC = () => {
     }
   };
 
-  const getDetailedExplanationFromGemini = async (question: any, userAnswerId: number, isCorrect: boolean) => {
-    try {
-      setLoadingExplanation(question.id);
-      
-      const selectedAnswer = question.answers.find((a: any) => a.id === userAnswerId);
-      const correctAnswer = question.answers.find((a: any) => a.is_correct);
-      
-      const prompt = `You are an expert math tutor. Provide a VERY DETAILED educational explanation for the following question.
-
-Question: "${question.text}"
-Student's Answer: ${selectedAnswer?.text || 'No answer selected'}
-Correct Answer: ${correctAnswer?.text}
-The student ${isCorrect ? 'answered correctly' : 'answered incorrectly'}.
-
-Please provide a comprehensive explanation with:
-1. Concept explanation
-2. Step-by-step solution
-3. Why the answer is ${isCorrect ? 'correct' : 'incorrect'}
-4. Key takeaway
-5. Study tips
-
-Make it thorough and educational.`;
-
-      const response = await fetch(GEMINI_API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-goog-api-key': GEMINI_API_KEY,
-        },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 1000,
-          }
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`API returned ${response.status}`);
-      }
-
-      const data = await response.json();
-      const fullExplanation = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Detailed explanation not available.';
-      
-      return {
-        isCorrect,
-        explanation: fullExplanation,
-        detailedExplanation: fullExplanation,
-        correctAnswer: correctAnswer?.text || 'Unknown',
-        userAnswer: selectedAnswer?.text || 'No answer'
-      };
-    } catch (error) {
-      console.error('Error getting explanation:', error);
-      const correctAnswer = question.answers.find((a: any) => a.is_correct);
-      return {
-        isCorrect,
-        explanation: `The correct answer is ${correctAnswer?.text}. ${isCorrect ? 'Good job!' : 'Keep practicing!'}`,
-        detailedExplanation: `The correct answer is ${correctAnswer?.text}. ${isCorrect ? 'Great work!' : 'Review the material and try again.'}`,
-        correctAnswer: correctAnswer?.text || 'Unknown',
-        userAnswer: question.answers.find((a: any) => a.id === userAnswerId)?.text || 'No answer'
-      };
-    } finally {
-      setLoadingExplanation(null);
-    }
-  };
-
-  const calculateLocalResult = (): SubmitResponse => {
-    if (!exam) {
-      throw new Error('Exam data not available');
-    }
-
-    let correctAnswers = 0;
-    const totalQuestions = exam.questions?.length || 0;
-
-    exam.questions?.forEach((question) => {
-      const selectedAnswerId = answers[question.id];
-      if (selectedAnswerId !== 0) {
-        const selectedAnswer = question.answers.find(a => a.id === selectedAnswerId);
-        if (selectedAnswer?.is_correct) {
-          correctAnswers++;
-        }
-      }
-    });
-
-    const incorrectAnswers = totalQuestions - correctAnswers;
-    const score = totalQuestions > 0 ? (correctAnswers / totalQuestions) * 100 : 0;
-    
-    const endTime = new Date();
-    const timeSpentSeconds = (endTime.getTime() - startTime.getTime()) / 1000;
-    const timeSpentMinutes = Math.floor(timeSpentSeconds / 60);
-
-    return {
-      score: Math.round(score),
-      correctAnswers,
-      incorrectAnswers,
-      totalQuestions,
-      timeSpent: timeSpentMinutes,
-      passed: score >= 70,
-      percentage: Math.round(score)
-    };
-  };
-
-  const calculateAndSubmitResult = async () => {
-    if (submitting) return;
-    
+  const handleSubmit = async () => {
+    if (submitting || !id) return;
     setSubmitting(true);
-    
-    const localResult = calculateLocalResult();
-    console.log('Local result calculated:', localResult);
-    
-    const explanationsMap: Explanation = {};
-    
-    for (const question of exam?.questions || []) {
-      const userAnswerId = answers[question.id];
-      if (userAnswerId === 0) {
-        const correctAnswer = question.answers.find(a => a.is_correct);
-        explanationsMap[question.id] = {
-          isCorrect: false,
-          explanation: `You didn't answer this question. Correct answer: ${correctAnswer?.text}`,
-          detailedExplanation: `Review: ${question.text}\nCorrect answer: ${correctAnswer?.text}`,
-          correctAnswer: correctAnswer?.text || 'Unknown',
-          userAnswer: 'Not answered'
-        };
-      } else {
-        const selectedAnswer = question.answers.find(a => a.id === userAnswerId);
-        const isCorrect = selectedAnswer?.is_correct || false;
-        const explanation = await getDetailedExplanationFromGemini(question, userAnswerId, isCorrect);
-        explanationsMap[question.id] = explanation;
-      }
-    }
+    setError(null);
 
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(
-        'ae-exam-previous-attempt',
-        JSON.stringify({
-          result: localResult,
+    try {
+      const result: SubmitResponse = await submitExam(parseInt(id, 10), answers);
+
+      navigate(`/exam/${id}/result`, {
+        state: {
+          result,
           examTitle: exam?.title,
           questions: exam?.questions,
-        })
+          userAnswers: answers,
+        },
+      });
+    } catch (err: any) {
+      console.error('Error submitting exam:', err);
+      setError(err?.message || 'Failed to submit exam. Please try again.');
+      setSubmitting(false);
+    }
+  };
+
+  const buildImageUrl = (u?: string | null) => {
+    if (!u) return undefined;
+    if (/^https?:\/\//i.test(u) || u.startsWith('/')) return u;
+    const cloud = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+    if (!cloud) return u;
+    let cleaned = u.replace(/^\/+/, '');
+    if (!cleaned.includes('/') && !/^image\/upload\//i.test(cleaned)) {
+      cleaned = `image/upload/${cleaned}`;
+    }
+    return `https://res.cloudinary.com/${cloud}/${cleaned}`;
+  };
+
+  const looksLikeImage = (u?: string) => !!u && /\.(png|jpe?g|gif|svg|webp)(\?.*)?$/i.test(u);
+
+  const renderPassage = (passage: Passage | null | undefined) => {
+    if (!passage) return null;
+    const finalUrl = buildImageUrl(passage.image);
+    const text = passage.content || passage.title;
+
+    if (finalUrl && looksLikeImage(finalUrl)) {
+      return (
+        <div className="mb-4 rounded border p-2">
+          <img src={finalUrl} alt={passage.title || 'Passage image'} className="max-w-full h-auto mx-auto" />
+        </div>
       );
     }
-    
-    navigate(`/exam/${id}/result`, { 
-      state: { 
-        result: localResult,
-        examTitle: exam?.title,
-        explanations: explanationsMap,
-        questions: exam?.questions,
-        userAnswers: answers
-      } 
-    });
+    if (text) {
+      return <div className="mb-4 rounded border p-4 bg-gray-50 text-gray-800">{text}</div>;
+    }
+    return null;
   };
+
+  if (needsPassword) {
+    return (
+      <div className="container mx-auto px-4 py-8 max-w-md">
+        <form onSubmit={handlePasswordSubmit} className="bg-white rounded-lg shadow-md p-6">
+          <h2 className="text-xl font-bold mb-4">This exam requires a password</h2>
+          {error && <p className="text-red-600 text-sm mb-3">{error}</p>}
+          <input
+            type="password"
+            value={passwordInput}
+            onChange={(e) => setPasswordInput(e.target.value)}
+            className="w-full border rounded px-3 py-2 mb-4"
+            placeholder="Enter exam password"
+            autoFocus
+          />
+          <div className="flex gap-3">
+            <button type="submit" className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
+              Continue
+            </button>
+            <Link to="/" className="px-4 py-2 text-gray-600 hover:underline">
+              Cancel
+            </Link>
+          </div>
+        </form>
+      </div>
+    );
+  }
 
   if (error) {
     return (
@@ -309,7 +196,7 @@ Make it thorough and educational.`;
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
           <h2 className="font-bold mb-2">Error Loading Exam</h2>
           <p>{error}</p>
-          <button onClick={() => window.location.reload()} className="mt-3 bg-red-500 text-white px-4 py-1 rounded hover:bg-red-600">
+          <button onClick={() => fetchExam()} className="mt-3 bg-red-500 text-white px-4 py-1 rounded hover:bg-red-600">
             Try Again
           </button>
           <Link to="/" className="mt-3 ml-2 inline-block text-blue-500 hover:underline">
@@ -333,8 +220,8 @@ Make it thorough and educational.`;
 
   const currentQuestion = exam.questions?.[currentQuestionIndex];
   const totalQuestions = exam.questions?.length || 0;
-  const answeredCount = Object.values(answers).filter(id => id !== 0).length;
-  const isCurrentQuestionAnswered = currentQuestion ? answers[currentQuestion.id] !== 0 : false;
+  const answeredCount = Object.values(answers).filter((id) => id !== null).length;
+  const isCurrentQuestionAnswered = currentQuestion ? answers[currentQuestion.id] !== null : false;
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -349,9 +236,9 @@ Make it thorough and educational.`;
         <div className="flex justify-between items-center text-sm text-gray-600">
           <span>📊 Progress: {answeredCount} / {totalQuestions} answered</span>
           <div className="w-32 bg-gray-200 rounded-full h-2">
-            <div 
+            <div
               className="bg-blue-500 rounded-full h-2 transition-all duration-300"
-              style={{ width: `${(answeredCount / totalQuestions) * 100}%` }}
+              style={{ width: `${totalQuestions ? (answeredCount / totalQuestions) * 100 : 0}%` }}
             />
           </div>
         </div>
@@ -366,20 +253,20 @@ Make it thorough and educational.`;
               Question Navigator
             </h3>
             <div className="grid grid-cols-4 gap-2">
-              {exam.questions?.map((_, idx) => {
-                const isAnswered = answers[exam.questions![idx].id] !== 0;
+              {exam.questions?.map((q, idx) => {
+                const isAnswered = answers[q.id] !== null;
                 const isCurrent = idx === currentQuestionIndex;
 
                 return (
                   <button
-                    key={idx}
+                    key={q.id}
                     onClick={() => goToQuestion(idx)}
                     className={`
                       aspect-square rounded-lg font-semibold text-sm transition-all
                       flex items-center justify-center
-                      ${isCurrent 
-                        ? 'bg-blue-500 text-white ring-2 ring-blue-300 scale-105' 
-                        : isAnswered 
+                      ${isCurrent
+                        ? 'bg-blue-500 text-white ring-2 ring-blue-300 scale-105'
+                        : isAnswered
                           ? 'bg-blue-500 text-white hover:bg-blue-600'
                           : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
                       }
@@ -390,7 +277,7 @@ Make it thorough and educational.`;
                 );
               })}
             </div>
-            
+
             {/* Stats summary in sidebar */}
             <div className="mt-4 pt-3 border-t border-gray-200">
               <div className="text-xs space-y-1">
@@ -430,108 +317,17 @@ Make it thorough and educational.`;
                   </span>
                 )}
               </div>
-              {/* Render exam-level passage if present (can be null). Support text or image URLs. */}
-              {(() => {
-                // resolve exam passage from several possible shapes
-                const raw = exam.passage;
-                let resolved: Passage | null = null;
-                if (!raw && exam.passage_id && passageMap[exam.passage_id]) resolved = passageMap[exam.passage_id];
-                else if (typeof raw === 'number' && passageMap[raw]) resolved = passageMap[raw];
-                else if (raw && typeof raw === 'object' && (raw as Passage).content) resolved = raw as Passage;
 
-                if (!resolved) return null;
-
-                const url = resolved.image;
-                const text = resolved.content || resolved.title;
-                const buildImageUrl = (u?: string | null) => {
-                  if (!u) return undefined;
-                  if (/^https?:\/\//i.test(u) || u.startsWith('/')) return u;
-                  const cloud = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
-                  if (!cloud) return u;
-                  let cleaned = u.replace(/^\/+/, '');
-                  // If it's a bare public id (no slashes and no resource type), prepend default Cloudinary path
-                  if (!cleaned.includes('/') && !/^image\/upload\//i.test(cleaned)) {
-                    cleaned = `image/upload/${cleaned}`;
-                  }
-                  return `https://res.cloudinary.com/${cloud}/${cleaned}`;
-                };
-
-                const finalUrl = buildImageUrl(url);
-                const looksLikeImage = (u?: string) => !!u && /\.(png|jpe?g|gif|svg|webp)(\?.*)?$/i.test(u);
-
-                if (finalUrl && looksLikeImage(finalUrl)) {
-                  return (
-                    <div className="mb-4 rounded border p-2">
-                      <img src={finalUrl} alt={resolved.title || 'Passage image'} className="max-w-full h-auto mx-auto" />
-                    </div>
-                  );
-                }
-
-                if (text) {
-                  return (
-                    <div className="mb-4 rounded border p-4 bg-gray-50 text-gray-800">{text}</div>
-                  );
-                }
-
-                return <pre className="mb-4 rounded border p-2 bg-gray-50 text-xs overflow-auto">{JSON.stringify(resolved)}</pre>;
-              })()}
+              {renderPassage(currentQuestion.passage)}
 
               <div className="space-y-3 mt-6">
-                {/* Render question-level passage if present */}
-                {(() => {
-                  const qRaw = currentQuestion.passage;
-                  let qResolved: Passage | null = null;
-                  if (!qRaw) {
-                    const anyQ = currentQuestion as any;
-                    if (anyQ.passage_id && passageMap[anyQ.passage_id]) qResolved = passageMap[anyQ.passage_id];
-                  } else if (typeof qRaw === 'number' && passageMap[qRaw]) qResolved = passageMap[qRaw];
-                  else if (qRaw && typeof qRaw === 'object' && (qRaw as Passage).content) qResolved = qRaw as Passage;
-
-                  if (qResolved) {
-                    const url = qResolved.image;
-                    const text = qResolved.content || qResolved.title;
-                    const looksLikeImage = (u?: string) => !!u && /\.(png|jpe?g|gif|svg|webp)(\?.*)?$/i.test(u);
-
-                    const buildImageUrlQ = (u?: string | null) => {
-                      if (!u) return undefined;
-                      if (/^https?:\/\//i.test(u) || u.startsWith('/')) return u;
-                      const cloud = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
-                      if (!cloud) return u;
-                      let cleaned = u.replace(/^\/+/, '');
-                      if (!cleaned.includes('/') && !/^image\/upload\//i.test(cleaned)) {
-                        cleaned = `image/upload/${cleaned}`;
-                      }
-                      return `https://res.cloudinary.com/${cloud}/${cleaned}`;
-                    };
-
-                    const finalUrlQ = buildImageUrlQ(url);
-                    if (finalUrlQ && looksLikeImage(finalUrlQ)) {
-                      return (
-                        <div className="mb-4 rounded border p-2">
-                          <img src={finalUrlQ} alt={qResolved.title || 'Passage image'} className="max-w-full h-auto mx-auto" />
-                        </div>
-                      );
-                    }
-
-                    if (text) {
-                      return (
-                        <div className="mb-4 rounded border p-4 bg-gray-50 text-gray-800">{text}</div>
-                      );
-                    }
-
-                    return <pre className="mb-4 rounded border p-2 bg-gray-50 text-xs overflow-auto">{JSON.stringify(qResolved)}</pre>;
-                  }
-
-                  return null;
-                })()}
-
                 {currentQuestion.answers.map((answer) => (
                   <label
                     key={answer.id}
                     className={`
                       flex items-center space-x-3 p-4 rounded-lg cursor-pointer transition-all
-                      ${answers[currentQuestion.id] === answer.id 
-                        ? 'bg-blue-50 border-2 border-blue-500' 
+                      ${answers[currentQuestion.id] === answer.id
+                        ? 'bg-blue-50 border-2 border-blue-500'
                         : 'bg-gray-50 border-2 border-transparent hover:bg-gray-100'
                       }
                     `}
@@ -551,12 +347,6 @@ Make it thorough and educational.`;
                   </label>
                 ))}
               </div>
-              
-              {loadingExplanation === currentQuestion.id && (
-                <div className="mt-4 p-3 bg-blue-50 rounded-lg">
-                  <p className="text-sm text-blue-600">🤔 Generating AI explanation...</p>
-                </div>
-              )}
 
               {/* Navigation Buttons */}
               <div className="flex justify-between items-center gap-4 mt-8">
@@ -565,22 +355,22 @@ Make it thorough and educational.`;
                   disabled={currentQuestionIndex === 0}
                   className={`
                     px-6 py-2 rounded-lg font-semibold transition-colors
-                    ${currentQuestionIndex === 0 
-                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
+                    ${currentQuestionIndex === 0
+                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                       : 'bg-gray-500 text-white hover:bg-gray-600'
                     }
                   `}
                 >
                   ← Previous
                 </button>
-                
+
                 <button
                   onClick={goToNextQuestion}
                   disabled={currentQuestionIndex === totalQuestions - 1}
                   className={`
                     px-6 py-2 rounded-lg font-semibold transition-colors
-                    ${currentQuestionIndex === totalQuestions - 1 
-                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
+                    ${currentQuestionIndex === totalQuestions - 1
+                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                       : 'bg-gray-500 text-white hover:bg-gray-600'
                     }
                   `}
@@ -592,15 +382,14 @@ Make it thorough and educational.`;
           )}
         </div>
       </div>
-
-      {/* Submit Button */}
+      
       <div className="mt-8 text-center">
         <button
-          onClick={calculateAndSubmitResult}
+          onClick={handleSubmit}
           disabled={submitting}
           className="bg-blue-500 text-white px-8 py-3 rounded-lg hover:bg-blue-600 disabled:bg-gray-400 text-lg font-semibold transition-colors"
         >
-          {submitting ? '📚 Getting AI Explanations...' : '✅ Submit Exam & Get AI Explanations'}
+          {submitting ? 'Submitting...' : '✅ Submit Exam'}
         </button>
       </div>
     </div>

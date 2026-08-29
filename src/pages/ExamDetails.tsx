@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { getExam, getPassage } from '../services/api';
-import type { Exam, Passage } from '../services/api';
+import { getExam } from '../services/api';
+import type { Exam } from '../services/api';
 import SafeHtml from '../components/SafeHtml';
 
 const ExamDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [exam, setExam] = useState<Exam | null>(null);
-  const [passage, setPassage] = useState<Passage | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,20 +20,8 @@ const ExamDetails: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-      console.log(`Fetching exam ${id}...`);
-      const examData = await getExam(parseInt(id!));
-      console.log('Exam data received:', examData);
+      const examData = await getExam(parseInt(id!, 10));
       setExam(examData);
-      // If backend only provides a passage id, fetch it
-      try {
-        const pid = typeof examData.passage === 'number' ? examData.passage : examData.passage_id;
-        if (pid) {
-          const p = await getPassage(pid as number);
-          setPassage(p);
-        }
-      } catch (err) {
-        console.warn('Failed to fetch exam passage', err);
-      }
     } catch (error) {
       console.error('Error fetching exam:', error);
       setError('Failed to load exam details. Please try again.');
@@ -80,71 +67,31 @@ const ExamDetails: React.FC = () => {
       <div className="bg-white rounded-lg shadow-md p-8">
         <h1 className="text-3xl font-bold mb-4"><SafeHtml html={exam.title} /></h1>
         <div className="text-gray-600 mb-6"><SafeHtml html={exam.description} /></div>
-        {/* Render exam-level passage if provided by backend (may be null). Use fetched `passage` as fallback. */}
-        {(exam.passage || passage) && (
-          <div className="mb-6">
-            {(() => {
-              const raw = exam.passage ?? passage;
-              let text: string | undefined;
-              let url: string | undefined;
 
-              if (typeof raw === 'string') {
-                text = raw;
-                url = /^(https?:)?\/\//.test(raw) ? raw : undefined;
-              } else if (typeof raw === 'number') {
-                // we attempted to fetch the passage into `passage` state earlier
-                if (passage) {
-                  text = passage.content ?? passage.title;
-                  url = passage.image ?? undefined;
-                }
-              } else if (raw && typeof raw === 'object') {
-                text = (raw as Passage).content ?? (raw as Passage).title;
-                url = (raw as any).image ?? (raw as any).url;
-              }
+        {/*
+          Note: passages, questions, and answers are NOT available here.
+          ExamDetailView returns ExamListSerializer, which only exposes the
+          metadata fields below. Full exam content (questions, passages)
+          is only returned by POST /exams/<id>/start/, inside
+          StartExamResponse.exam (ExamTakeSerializer). Render that content
+          on the "take exam" screen instead, sourced from startExam().
+        */}
 
-              const buildImageUrl = (u?: string | null) => {
-                if (!u) return undefined;
-                if (/^https?:\/\//i.test(u) || u.startsWith('/')) return u;
-                const cloud = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
-                if (!cloud) return u;
-                let cleaned = u.replace(/^\/+/, '');
-                if (!cleaned.includes('/') && !/^image\/upload\//i.test(cleaned)) {
-                  cleaned = `image/upload/${cleaned}`;
-                }
-                return `https://res.cloudinary.com/${cloud}/${cleaned}`;
-              };
-
-              const finalUrl = buildImageUrl(url);
-              const looksLikeImage = (u?: string) => !!u && /\.(png|jpe?g|gif|svg|webp)(\?.*)?$/i.test(u);
-
-              if (finalUrl && looksLikeImage(finalUrl)) {
-                return (
-                  <div className="rounded border p-2">
-                    <img src={finalUrl} alt="Passage" className="max-w-full h-auto mx-auto" />
-                  </div>
-                );
-              }
-
-              if (text) {
-                return (
-                  <div className="rounded border p-4 bg-gray-50 text-gray-800">{text}</div>
-                );
-              }
-
-              return <pre className="rounded border p-2 bg-gray-50 text-xs overflow-auto">{JSON.stringify(raw)}</pre>;
-            })()}
-          </div>
-        )}
-        
         <div className="border-t border-b py-4 mb-6">
           <div className="flex justify-between mb-2">
             <span className="font-semibold">Duration:</span>
-            <span>{exam.duration_minutes ?? exam.duration ?? 0} minutes</span>
+            <span>{exam.duration_minutes} minutes</span>
           </div>
-          <div className="flex justify-between">
-            <span className="font-semibold">Total Questions:</span>
-            <span>{exam.questions?.length ?? exam.total_questions ?? 0}</span>
+          <div className="flex justify-between mb-2">
+            <span className="font-semibold">Status:</span>
+            <span>{exam.is_available ? 'Available' : 'Not available'}</span>
           </div>
+          {exam.requires_password && (
+            <div className="flex justify-between">
+              <span className="font-semibold">Access:</span>
+              <span>Password required</span>
+            </div>
+          )}
         </div>
 
         <div className="flex gap-4">
@@ -161,7 +108,6 @@ const ExamDetails: React.FC = () => {
             Back to Exams
           </Link>
         </div>
-
       </div>
     </div>
   );

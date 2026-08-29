@@ -33,40 +33,55 @@ const extractDjoserErrorMessage = (data: any): string => {
   return '';
 };
 
-// Type definitions
+
+
 export interface Answer {
   id: number;
   text: string;
-  is_correct: boolean;
+  is_correct?: boolean;
 }
 
 export interface Passage {
   id: number;
   title?: string;
   content?: string;
-  // image field returned by backend (Cloudinary) is typically a URL string or null
   image?: string | null;
 }
 
 export interface Question {
   id: number;
   text: string;
+  order: number;
+  passage: Passage | null;
   answers: Answer[];
-  // backend may return a passage id, a nested passage object, or null
-  passage?: number | Passage | null;
 }
+
 
 export interface Exam {
   id: number;
   title: string;
   description: string;
   duration_minutes: number;
-  duration?: number;
-  total_questions?: number;
-  questions?: Question[];
-  // Optional passage support: backend may provide a passage object, url, or plain text. Can be null.
-  passage?: number | Passage | string | null;
-  passage_id?: number | null;
+  is_active: boolean;
+  start_time: string | null;
+  end_time: string | null;
+  is_available: boolean;
+  requires_password: boolean;
+}
+
+
+export interface ExamTake {
+  id: number;
+  title: string;
+  description: string;
+  duration_minutes: number;
+  questions: Question[];
+}
+
+export interface StartExamResponse {
+  session_id: number;
+  expires_at: string;
+  exam: ExamTake;
 }
 
 export interface AuthUser {
@@ -79,57 +94,53 @@ export interface AuthUser {
   role?: string;
 }
 
+export interface SubmitAnswerItem {
+  question_id: number;
+  selected_answer_id: number | null;
+}
+
 export interface AnswerSheet {
-  [questionId: number]: number;
+  [questionId: number]: number | null;
 }
 
 export interface SubmitResponse {
+  id: number;
+  student: string;
+  exam_title: string;
   score: number;
-  correctAnswers: number;
-  incorrectAnswers: number;
-  totalQuestions: number;
-  timeSpent: number;
-  passed: boolean;
+  total: number;
   percentage: number;
+  passed: boolean;
+  finished_at: string;
 }
 
-// Determine API URL based on environment
 const getApiUrl = (): string => {
   if (import.meta.env.VITE_API_URL) {
     return import.meta.env.VITE_API_URL;
   }
   if (import.meta.env.DEV) {
-    return '/api'; 
+    return '/api';
   }
   return 'https://ae-exam.onrender.com/api';
 };
 
-// Create axios instance WITHOUT default credentials
 const API = axios.create({
   baseURL: getApiUrl(),
   headers: {
     'Content-Type': 'application/json',
   },
   timeout: 30000,
-  // DO NOT set withCredentials: true unless backend explicitly allows your origin
-  // withCredentials: false is the default and works with wildcard CORS
+
 });
 
 const ACCESS_TOKEN_KEY = 'ae_auth_token';
 
-// Only add credentials if absolutely needed (like for session-based auth)
-// For token-based auth (JWT), you don't need credentials
 API.interceptors.request.use(
   (config) => {
-    // Add auth token if needed (this doesn't trigger CORS credentials preflight)
     const token = localStorage.getItem(ACCESS_TOKEN_KEY);
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }
-    
-    // Only add credentials if your backend requires it and has proper CORS config
-    // config.withCredentials = false; // Explicitly false by default
-    
     console.log(`Making request to: ${config.baseURL}${config.url}`);
     return config;
   },
@@ -139,7 +150,6 @@ API.interceptors.request.use(
   }
 );
 
-// Response interceptor for error handling
 API.interceptors.response.use(
   (response) => {
     console.log(`Response from ${response.config.url}:`, response.status);
@@ -150,25 +160,28 @@ API.interceptors.response.use(
       console.error('Network error - cannot reach the server');
       return Promise.reject({ message: 'Cannot connect to server. Please check your internet connection.' });
     }
-    
+
     if (error.response) {
       console.error(`Server error ${error.response.status}:`, error.response.data);
-      const friendlyMessage = extractDjoserErrorMessage(error.response.data) || error.response.data?.message || `Server error: ${error.response.status}`;
-      return Promise.reject({ 
+      const friendlyMessage =
+        extractDjoserErrorMessage(error.response.data) ||
+        error.response.data?.message ||
+        `Server error: ${error.response.status}`;
+      return Promise.reject({
         message: friendlyMessage,
-        status: error.response.status 
+        status: error.response.status,
       });
     }
-    
+
     console.error('Request setup error:', error.message);
     return Promise.reject({ message: error.message || 'Request failed' });
   }
 );
 
-// API Functions
+
 export const getExams = async (): Promise<Exam[]> => {
   try {
-    const response = await API.get<Exam[]>("/exams/");
+    const response = await API.get<Exam[]>('/exams/');
     return response.data;
   } catch (error) {
     console.error('getExams failed:', error);
@@ -176,15 +189,21 @@ export const getExams = async (): Promise<Exam[]> => {
   }
 };
 
+
 export const getExam = async (id: number): Promise<Exam> => {
   try {
-    const response = await API.get<Exam>(`/exams/${id}/`);
-    return response.data;
+    const exams = await getExams();
+    const exam = exams.find((e) => e.id === id);
+    if (!exam) {
+      throw { message: 'Exam not found.', status: 404 };
+    }
+    return exam;
   } catch (error) {
     console.error(`getExam(${id}) failed:`, error);
     throw error;
   }
 };
+
 
 export const getPassage = async (id: number): Promise<Passage> => {
   try {
@@ -196,9 +215,59 @@ export const getPassage = async (id: number): Promise<Passage> => {
   }
 };
 
+
+export const startExam = async (id: number, password?: string): Promise<StartExamResponse> => {
+  try {
+    const payload = password ? { password } : {};
+    const response = await API.post<StartExamResponse>(`/exams/${id}/start/`, payload);
+    return response.data;
+  } catch (error) {
+    console.error(`startExam(${id}) failed:`, error);
+    throw error;
+  }
+};
+
+
 export const submitExam = async (id: number, answers: AnswerSheet): Promise<SubmitResponse> => {
-  // If your backend exposes a dedicated submit endpoint, update this path accordingly.
-  const response = await API.post<SubmitResponse>(`/exams/${id}/submit/`, { answers });
+  const answersArray: SubmitAnswerItem[] = Object.entries(answers).map(
+    ([questionId, selectedAnswerId]) => ({
+      question_id: Number(questionId),
+      selected_answer_id: selectedAnswerId ?? null,
+    })
+  );
+
+  const response = await API.post<SubmitResponse>(`/exams/${id}/submit/`, {
+    answers: answersArray,
+  });
+  return response.data;
+};
+
+export interface ExamHistoryItem {
+  id: number;
+  exam: number | { id: number; title: string };
+  exam_title?: string;
+  started_at: string;
+  submitted: boolean;
+  percentage?: number;
+  passed?: boolean;
+  result?: {
+    percentage?: number;
+    passed?: boolean;
+  };
+}
+
+export const getExamHistory = async (): Promise<ExamHistoryItem[]> => {
+  try {
+    const response = await API.get<ExamHistoryItem[]>('/exams/history/');
+    return response.data;
+  } catch (error) {
+    console.error('getExamHistory failed:', error);
+    throw error;
+  }
+};
+
+export const getExamResult = async (id: number): Promise<SubmitResponse> => {
+  const response = await API.get<SubmitResponse>(`/exams/${id}/result/`);
   return response.data;
 };
 
